@@ -1,3 +1,5 @@
+import queue
+import threading
 import re
 Progs = ["prog1.txt"]
 pcbs = []
@@ -22,7 +24,7 @@ class PCB:
         self.period = period                    # periodo da tarefa -> intervalo entre ativacoes
         self.ci = ci                            # tempo de computacao maxima
         self.arrival_time = arrival_time        # instate que tarefa chega ao sistema
-        self.deadline = arrival_time + period   # deadline absoluto
+        self.deadline = arrival_time + period   # deadline absoluto TODO ta com cara errada
         self.block_time = 0                     # contador regressivo -> usar no SYSCALL
 
 
@@ -87,61 +89,129 @@ def parser(file_name, period, ci, arrival_time):
     return PCB(file_name, instructions, data, period, ci, arrival_time)
 
 
-"""
+
 # EXECUCAO - Execucao em geral do trabalho
-def executar():
-    acc = 0
-    pc = 0
-    active = 0 # TODO rename, qual pcbs[active] esta rodando
+def executar(channel):
+    syscall = 1 #flag do SO
+    acc = 0 # acc ativo
+    pc = 0 # pc ativo
+    active = 0 # guarda o processo ativo, se 0 e o SO
+    time = 0
     while len(pcbs) > 0:
 
-        if active == -1: # roda so em 0 (conferir teoria)
-            # antes 0 termina 1 printa e 2 le
-            # TODO roda a logica do escalonamento
+        if syscall == 1:
+            if acc == 0: # termina o programa
+                print(f"Processo {pcbs[active].name} terminou, matando processo")
+                pcbs.remove(pcbs[active])
+                syscall = 0
+                escalonar()
+            elif acc == 1: # imprime o valor do acc
+                print(f"Processo {pcbs[active].name} pediu para imprimir valor: {acc}")
+                syscall = 0
+            elif acc == 2: # le um valor inteiro e salva no acc
+                acc = int(input(f"Processo {pcbs[active].name} pediu para ler um valor inteiro: "))
+                syscall = 0
+
 
         else:
-            # carrega instrucao
-            with open(Progs[active], "r") as f:
-                instructions = f.readlines()
+            pc =  pcbs[active].pc
+            acc = pcbs[active].acc
+            pcbs[active].state = "running"
 
-            # TODO cipa abaixo joga em uma funcao
-            while active != -1: #tem jeito melhor
-                instr = instructions[pcbs[active].pc].split() # TODO n sei como ele ta splitando as ,
+            while active != 0:
+                instr = pcbs[active].instructions[pc]
+
+                # ARITMETICO ---------------------------------------
                 if instr[0] == "ADD":
-                    acc += int(instr[1])
+                    if instr[1].startswith("#"): #imediato
+                        acc += int(instr[1][1:])
+                    else: #variavel
+                        acc += pcbs[active].data[instr[1]]
                 elif instr[0] == "SUB":
-                    acc -= int(instr[1])
+                    if instr[1].startswith("#"):
+                        acc -= int(instr[1][1:])
+                    else:
+                        acc -= pcbs[active].data[instr[1]]
                 elif instr[0] == "MULT":
-                    acc *= int(instr[1])
+                    if instr[1].startswith("#"):
+                        acc *= int(instr[1][1:])
+                    else:
+                        acc *= pcbs[active].data[instr[1]]
                 elif instr[0] == "DIV":
-                    acc /= int(instr[1])
+                    if instr[1].startswith("#"):
+                        acc /= int(instr[1][1:])
+                    else:
+                        acc /= pcbs[active].data[instr[1]]
+
+                # MEMORIA ---------------------------------------
                 elif instr[0] == "LOAD":
-                    acc = int(instr[1])
+                    acc = pcbs[active].data[instr[1]]
                 elif instr[0] == "STORE":
-                    # TODO fazer um hash e inicializar um hash de dados no pcb
-                    # TODO -------------------------------------------------
-                    # ta tudo errado pq ele tem q pegar no hash de dados o lugar
+                    pcbs[active].data[instr[1]] = acc
+
+                # SALTO -----------------------------------------
                 elif instr[0] == "BRANY":
-                    pcbs[active].pc = int(instr[1])
+                    pcbs[active].pc = pcbs[active].data[instr[1]]
                 elif instr[0] == "BRPOS":
                     if acc > 0:
-                        pcbs[active].pc = int(instr[1])
+                        pcbs[active].pc = pcbs[active].data[instr[1]]
                 elif instr[0] == "BRZERO":
                     if acc == 0:
-                        pcbs[active].pc = int(instr[1])
+                        pcbs[active].pc = pcbs[active].data[instr[1]]
+                
+                # SISTEMA ---------------------------------------
                 elif instr[0] == "SYSCALL":
-                    active = -1
-                # da pra sonhar em meter um negocinho mais bonito
-"""
+                    # salva contexto e mando pro SO
+                    pcbs[active].pc = pc
+                    pcbs[active].acc = acc
+                    pcbs[active].state = "ready"
+                    acc = int(instr[1]) # acc recebe o pedido do processo
+                    syscall = 1
+
+                # checa a interrupcao TODO fiquei com pena de apagar
+                #if not channel.empty():
+                    # nova tarefa chegou, salva contexto e manda pro SO
+                    #pcbs[active].pc = pc
+                    #pcbs[active].acc = acc
+                    #pcbs[active].state = "ready"
+                    #acc = 3  # acc para escalonar
+                    #syscall = 1
+
+                for pcb in pcbs:
+                    if pcb.state == "blocked":
+                        pcb.block_time -= 1
+                        if pcb.block_time <= 0:
+                            pcb.state = "ready"
+                    pcb.deadline -= 1
+                    if pcb.deadline <= 0:
+                        # deadline estourou, mata o processo
+                        print(f"Processo {pcb.name} estourou deadline, matando processo")
+                        pcbs.remove(pcb)
+
+                pc += 1
+                time += 1
+
+
 
 # GERENCIAMENTO - gerenciador de processos
 
 # ESCALONADOR - implementa EDF
+def escalonar():
 
 # INTERFACE - entrada e saida
+def interface(channel): # ta errado, tem que receber a cada coisada
+    while True:
+        prog = input("prog_name period ci:")
+        channel.put(prog)
+
 
 
 if __name__ == '__main__':
+    channel = queue.Queue()
+
+    interface = threading.Thread(target=interface, args=(channel,))
+    interface.start()
+
     pcb = parser("prog2.txt", period=10, ci=5, arrival_time=0)
 
     print("=== INSTRUCOES ===")
