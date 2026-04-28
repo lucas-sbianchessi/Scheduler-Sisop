@@ -2,10 +2,11 @@ import random
 import re
 Progs = ["prog1.txt"]
 pcbs = []
+pcbs_blocked = []
 validInstrs = ["ADD", "SUB", "MULT", "DIV", "LOAD", "STORE", "BRANY", "BRPOS", "BRZERO", "SYSCALL"] #pra veificacao no carregarProgs
 
 
-# PARTIDO COMUNISTA BRASILEIRO ou PROCESS CONTROL BLOCK
+# PROCESS CONTROL BLOCK
 # cadastro de cada processo -> guarda tudo que precisa pra continuar de onde parou
 # temos duas categorias neste caso -> estado de exec. e info. de escalonamento
 class PCB:
@@ -23,7 +24,7 @@ class PCB:
         self.period = period                    # periodo da tarefa -> intervalo entre ativacoes
         self.ci = ci                            # tempo de computacao maxima
         self.arrival_time = arrival_time        # instate que tarefa chega ao sistema
-        self.deadline = arrival_time + period   # deadline absoluto TODO ta com cara errada
+        self.deadline = arrival_time + period   # deadline absoluto
         self.block_time = 0                     # contador regressivo -> usar no SYSCALL
 
 
@@ -123,111 +124,130 @@ def parser(file_name, period, ci, arrival_time):
             # se tempo atual >= deadline de algum processo, reporta perda de deadline com o nome e instante
 
 def executar():
-    syscall = 1 #flag do SO
-    acc = 0 # acc ativo
-    pc = 0 # pc ativo
-    active = 0 # guarda o processo ativo, se 0 e o SO
+    syscall = 0 #flag do SO
+    active = 0
     time = 0
-    while len(pcbs) > 0:
+    acc = 0 # apenas para flag do SO
 
+    while len(pcbs) > 0:
         if syscall == 1:
             if acc == 0: # termina o programa
                 print(f"Processo {pcbs[active].name} terminou, matando processo")
-                pcbs.remove(pcbs[active])
+                pcbs.pop(active)
                 syscall = 0
             elif acc == 1: # imprime o valor do acc
-                print(f"Processo {pcbs[active].name} pediu para imprimir valor: {acc}")
+                print(f"Processo {pcbs[active].name} pediu para imprimir valor: {pcbs[active].acc}")
                 pcbs[active].block_time = random.randint(1, 3)
                 pcbs[active].state = "blocked"
+                pcbs_blocked.append(pcbs.pop(active)) # remove do pcbs e coloca no blocked
                 syscall = 0
             elif acc == 2: # le um valor inteiro e salva no acc
                 acc = int(input(f"Processo {pcbs[active].name} pediu para ler um valor inteiro: "))
                 pcbs[active].block_time = random.randint(1, 3)
                 pcbs[active].state = "blocked"
+                pcbs_blocked.append(pcbs.pop(active)) # remove do pcbs e coloca no blocked
                 syscall = 0
             escalonar()
+            continue
 
         else:
-            pc =  pcbs[active].pc
-            acc = pcbs[active].acc
+            print(f"DEBUG: len(pcbs)={len(pcbs)}, active={active}, pc={pcbs[active].pc}")
             pcbs[active].state = "running"
 
-            while active != 0:
-                instr = pcbs[active].instructions[pc]
+            instr = pcbs[active].instructions[pcbs[active].pc]
+            # DEBUG
+            print(f"[t={time}] {pcbs[active].name} | pc={pcbs[active].pc} | acc={pcbs[active].acc} | instr={instr}")
+            # ARITMETICO ---------------------------------------
+            if instr[0] == "add":
+                if instr[1].startswith("#"): #imediato
+                    pcbs[active].acc += int(instr[1][1:])
+                else: #variavel
+                    pcbs[active].acc += pcbs[active].data[instr[1]]
 
-                # ARITMETICO ---------------------------------------
-                if instr[0] == "ADD":
-                    if instr[1].startswith("#"): #imediato
-                        acc += int(instr[1][1:])
-                    else: #variavel
-                        acc += pcbs[active].data[instr[1]]
-                elif instr[0] == "SUB":
-                    if instr[1].startswith("#"):
-                        acc -= int(instr[1][1:])
-                    else:
-                        acc -= pcbs[active].data[instr[1]]
-                elif instr[0] == "MULT":
-                    if instr[1].startswith("#"):
-                        acc *= int(instr[1][1:])
-                    else:
-                        acc *= pcbs[active].data[instr[1]]
-                elif instr[0] == "DIV":
-                    if instr[1].startswith("#"):
-                        acc /= int(instr[1][1:])
-                    else:
-                        acc /= pcbs[active].data[instr[1]]
+            elif instr[0] == "sub":
+                if instr[1].startswith("#"):
+                    pcbs[active].acc -= int(instr[1][1:])
+                else:
+                    pcbs[active].acc -= pcbs[active].data[instr[1]]
 
-                # MEMORIA ---------------------------------------
-                elif instr[0] == "LOAD":
-                    acc = pcbs[active].data[instr[1]]
-                elif instr[0] == "STORE":
-                    pcbs[active].data[instr[1]] = acc
+            elif instr[0] == "mult":
+                if instr[1].startswith("#"):
+                    pcbs[active].acc *= int(instr[1][1:])
+                else:
+                    pcbs[active].acc *= pcbs[active].data[instr[1]]
 
-                # SALTO -----------------------------------------
-                elif instr[0] == "BRANY":
-                    pcbs[active].pc = pcbs[active].data[instr[1]]
-                elif instr[0] == "BRPOS":
-                    if acc > 0:
-                        pcbs[active].pc = pcbs[active].data[instr[1]]
-                elif instr[0] == "BRZERO":
-                    if acc == 0:
-                        pcbs[active].pc = pcbs[active].data[instr[1]]
-                
-                # SISTEMA ---------------------------------------
-                elif instr[0] == "SYSCALL":
-                    # salva contexto e mando pro SO
-                    pcbs[active].pc = pc
-                    pcbs[active].acc = acc
-                    pcbs[active].state = "ready"
-                    acc = int(instr[1]) # acc recebe o pedido do processo
-                    syscall = 1
+            elif instr[0] == "div":
+                if instr[1].startswith("#"):
+                    pcbs[active].acc /= int(instr[1][1:])
+                else:
+                    pcbs[active].acc /= pcbs[active].data[instr[1]]
 
-                for pcb in pcbs:
-                    if pcb.state == "blocked": # tem q separar em filas diferentes
-                        pcb.block_time -= 1
-                        if pcb.block_time <= 0:
-                            pcb.state = "ready"
-                    pcb.deadline -= 1
-                    if pcb.deadline <= 0:
-                        # deadline estourou, mata o processo
-                        print(f"Processo {pcb.name} estourou deadline, matando processo")
-                        pcbs.remove(pcb)
+            # MEMORIA ---------------------------------------
+            elif instr[0] == "load":
+                pcbs[active].acc = pcbs[active].data[instr[1]]
+            elif instr[0] == "store":
+                pcbs[active].data[instr[1]] = pcbs[active].acc
 
-                pc += 1
+            # SALTO -----------------------------------------
+            elif instr[0] == "brany":
+                pcbs[active].pc = instr[1]
                 time += 1
-                interface(pcbs[active])
+                continue
+
+            elif instr[0] == "brpos":
+                if pcbs[active].acc > 0:
+                    pcbs[active].pc = instr[1]
+                    time += 1
+                    continue
+
+            elif instr[0] == "brzero":
+                    if pcbs[active].acc == 0:
+                        pcbs[active].pc = instr[1]
+                        time += 1
+                        continue
+
+            # eu sei que nos exemplos nao tem BRNEG mas vai que ne
+            elif instr[0] == "brneg":
+                if pcbs[active].acc < 0:
+                    pcbs[active].pc = instr[1]
+                    time += 1
+                    continue
+                
+            # SISTEMA ---------------------------------------
+            elif instr[0] == "syscall":
+                # salva contexto e mando pro SO
+                pcbs[active].state = "ready"
+                acc = int(instr[1]) # acc recebe o pedido do processo
+                syscall = 1
+
+            # atualiza bloqueados
+            for pcb in pcbs_blocked:
+                pcb.block_time -= 1
+                if pcb.block_time <= 0: # dareDY E TROCA DE FILA
+                    pcb.state = "ready"
+                    pcbs.append(pcb)
+                    pcbs_blocked.remove(pcb)
+                # deadline comparado com time, nao decremeta
+                if time >= pcb.deadline:
+                    print(f"DEADLINE PERDIDO: {pcb.name} no instante {time}")
+
+            pcbs[active].pc += 1
+            time += 1
 
 
 # ESCALONADOR - implementa EDF
-<<<<<<< HEAD
-# tem q ter duas filas ne
-def escalonar():
+def escalonar(active, time):
 
-# INTERFACE - entrada e saida
-def interface(pcb):
-    # tipo perguntar se quer rodar a proxima intrucao ou imprimir contexto, e tbm tem q separa os blocked e ready
-    
-=======
+    for n in range(len(pcbs)):
+        if pcbs[active].deadline > pcbs[n].deadline:
+            if (pcb.deadline - time) < 0: # deadline estorou, remove proc
+                print(f"Processo: {pcbs[n].name} estorou o deadline.")
+                pcbs.pop(n)
+            else:
+                active = n
+
+    return active
+
 # ESCALONADOR (tempo_atual)
 
     # 1-> reordenar a fila de prontos
@@ -255,18 +275,21 @@ def interface(pcb):
             # se tempo atual > deadline do processo
             # imprime que o processo X perdeu deadline no instante Y
 
-"""def escalonar():"""
-
 # INTERFACE - entrada e saida
+def interface(pcb):
+    pass
+    # tipo perguntar se quer rodar a proxima intrucao ou imprimir contexto, e tbm tem q separa os blocked e ready
 
 if __name__ == '__main__':
-    pcb = parser("prog2.txt", period=10, ci=5, arrival_time=0)
+    pcb = parser("prog1.txt", period=10, ci=5, arrival_time=0)
+    pcbs.append(pcb)
+    executar()
 
-    print("=== INSTRUCOES ===")
-    for i, instr in enumerate(pcb.instructions):
-        print(f"{i}: {instr}")
+    #print("=== INSTRUCOES ===")
+    #for i, instr in enumerate(pcb.instructions):
+     #   print(f"{i}: {instr}")
 
-    print("\n=== DATA ===")
-    print(pcb.data)
+    #print("\n=== DATA ===")
+    #print(pcb.data)
 
 
