@@ -1,5 +1,4 @@
-import queue
-import threading
+import random
 import re
 Progs = ["prog1.txt"]
 pcbs = []
@@ -91,7 +90,7 @@ def parser(file_name, period, ci, arrival_time):
 
 
 # EXECUCAO - Execucao em geral do trabalho
-def executar(channel):
+def executar():
     syscall = 1 #flag do SO
     acc = 0 # acc ativo
     pc = 0 # pc ativo
@@ -104,14 +103,17 @@ def executar(channel):
                 print(f"Processo {pcbs[active].name} terminou, matando processo")
                 pcbs.remove(pcbs[active])
                 syscall = 0
-                escalonar()
             elif acc == 1: # imprime o valor do acc
                 print(f"Processo {pcbs[active].name} pediu para imprimir valor: {acc}")
+                pcbs[active].block_time = random.randint(1, 3)
+                pcbs[active].state = "blocked"
                 syscall = 0
             elif acc == 2: # le um valor inteiro e salva no acc
                 acc = int(input(f"Processo {pcbs[active].name} pediu para ler um valor inteiro: "))
+                pcbs[active].block_time = random.randint(1, 3)
+                pcbs[active].state = "blocked"
                 syscall = 0
-
+            escalonar()
 
         else:
             pc =  pcbs[active].pc
@@ -168,15 +170,6 @@ def executar(channel):
                     acc = int(instr[1]) # acc recebe o pedido do processo
                     syscall = 1
 
-                # checa a interrupcao TODO fiquei com pena de apagar
-                #if not channel.empty():
-                    # nova tarefa chegou, salva contexto e manda pro SO
-                    #pcbs[active].pc = pc
-                    #pcbs[active].acc = acc
-                    #pcbs[active].state = "ready"
-                    #acc = 3  # acc para escalonar
-                    #syscall = 1
-
                 for pcb in pcbs:
                     if pcb.state == "blocked":
                         pcb.block_time -= 1
@@ -190,28 +183,23 @@ def executar(channel):
 
                 pc += 1
                 time += 1
+                interface(pcbs[active])
 
 
 
 # GERENCIAMENTO - gerenciador de processos
 
 # ESCALONADOR - implementa EDF
+# tem q ter duas filas ne
 def escalonar():
 
 # INTERFACE - entrada e saida
-def interface(channel): # ta errado, tem que receber a cada coisada
-    while True:
-        prog = input("prog_name period ci:")
-        channel.put(prog)
+def interface(pcb):
+    
 
 
 
 if __name__ == '__main__':
-    channel = queue.Queue()
-
-    interface = threading.Thread(target=interface, args=(channel,))
-    interface.start()
-
     pcb = parser("prog2.txt", period=10, ci=5, arrival_time=0)
 
     print("=== INSTRUCOES ===")
