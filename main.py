@@ -95,7 +95,7 @@ def executar():
     time = 0
     acc = 0 # apenas para flag do SO
 
-    MAX_TIME = 100
+    MAX_TIME = 1000
     while (len(pcbs) > 0 or len(pcbs_blocked) > 0 or len(pcbs_waiting) >0) and time < MAX_TIME:
 
         # 1-> ==== ATUALIZA BLOQUEADOS ================================================================
@@ -144,7 +144,7 @@ def executar():
         # 5-> ==== EXECUTA INSTRUCOES ================================================================
         pcbs[active].state = "running"
         instr = pcbs[active].instructions[pcbs[active].pc]
-        #print(f"DEBUG: [t={time}] {pcbs[active].name} | pc={pcbs[active].pc} | acc={pcbs[active].acc} | instr={instr}")
+        print(f"[t={time}] RUNNING: {pcbs[active].name} | DDline= {pcbs[active].deadline} | pc={pcbs[active].pc} | acc={pcbs[active].acc} | instr={instr}")
         # ARITMETICO ---------------------------------------
         if instr[0] == "add":
             if instr[1].startswith("#"):  # imediato
@@ -169,7 +169,7 @@ def executar():
         # MEMORIA ---------------------------------------
         elif instr[0] == "load":
             if instr[1].startswith("#"):
-                pcbs[active].acc -= int(instr[1][1:])
+                pcbs[active].acc = int(instr[1][1:])
             else:
                 pcbs[active].acc = pcbs[active].data[instr[1]]
         elif instr[0] == "store":
@@ -233,18 +233,173 @@ def escalonar(active, time):
             smallest = n
     if smallest != active:
         print(f"[t={time}] Escalonando: {pcbs[smallest].name} (deadline: {pcbs[smallest].deadline})")
+    else:
+        print(f" ")
     return smallest
 
-# INTERFACE - entrada e saida
-def interface(pcb):
-    pass
-    # tipo perguntar se quer rodar a proxima intrucao ou imprimir contexto, e tbm tem q separa os blocked e ready
+
+
+
+# INTERFACE - entrada e saida / bloatware
+def interface():
+    import tkinter as tk
+    from tkinter import scrolledtext, simpledialog
+    import threading
+    import builtins
+    import sys
+    import glob
+    root = tk.Tk()
+    root.title("T1-SISOP")
+
+    # 1-> parte superior, config
+    top = tk.LabelFrame(root, text="Configuracao", padx=6, pady=6)
+    top.pack(fill=tk.X, padx=10, pady=8)
+
+    tk.Label(top, text="Selecione um ou mais programas",
+             font=("Arial", 15, "bold")).pack(anchor=tk.W)
+
+    listbox = tk.Listbox(top, selectmode=tk.MULTIPLE,
+                         height=4, exportselection=False)
+
+    listbox.pack(fill=tk.X)
+    for f in sorted(glob.glob("*.txt")):
+        listbox.insert(tk.END, f)
+
+    params_frame = tk.Frame(top)
+    params_frame.pack(fill=tk.X, pady=4)
+    for col, txt in enumerate(["Arquivo", "Arrival", "Ci", "Periodo"]):
+        tk.Label(params_frame, text=txt, width=13,
+                 font=("Arial", 15, "bold")).grid(row=0, column=col)
+
+    param_vars = {}
+
+    def on_select(_=None):
+        selected = [listbox.get(i) for i in listbox.curselection()]
+        old = {f: (a.get(), c.get(), p.get())
+               for f, (a,c,p) in param_vars.items()}
+        for w in params_frame.winfo_children():
+            if  int (w.grid_info().get("row", 0)) > 0:
+                w.destroy()
+            param_vars.clear()
+
+        for row, fname in enumerate(selected,1):
+            d = old.get (fname, ("0", "0", "0"))
+            tk.Label(params_frame, text=fname, width=13).grid(row=row, column=0)
+            av = tk.StringVar(value=d[0])
+            cv = tk.StringVar(value=d[1])
+            pv = tk.StringVar(value=d[2])
+            tk.Entry(params_frame, textvariable=av, width=13).grid(row=row, column=1)
+            tk.Entry(params_frame, textvariable=cv, width=13).grid(row=row, column=2)
+            tk.Entry(params_frame, textvariable=pv, width=13).grid(row=row, column=3)
+            param_vars[fname] = (av, cv, pv)
+    listbox.bind("<<ListboxSelect>>", on_select)
+    tk.Button(top, text="Executar", command=lambda: iniciar(),
+              bg="white", fg="black",
+              font = ("Arial", 12, "bold")).pack(pady=4)
+
+    # 2-> parte inferior, saida
+    bot = tk.LabelFrame(root, text="Execucao", padx=6, pady=6)
+    bot.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,8))
+
+    output = scrolledtext.ScrolledText(bot, height=20, state=tk.DISABLED, font = ("Courier", 12), bg="black", fg="white")
+    output.pack(fill=tk.BOTH, expand=True)
+    output.tag_config("deadline", foreground="red", font=("Courier", 15))
+    output.tag_config("sched", foreground="cyan", font = ("Courier", 15))
+    output.tag_config("syscall", foreground="magenta", font = ("Courier", 15))
+    output.tag_config("debug", foreground="grey", font = ("Courier", 10))
+    output.tag_config("end", foreground="yellow", font = ("Courier", 15))
+    output.tag_config("helper", foreground="black", font = ("Courier", 1))
+
+    def log(msg):
+        output.configure(state=tk.NORMAL)
+        if "Deadline perdido" in msg: tag = "deadline"
+        elif "Escalonando" in msg or "→" in msg: tag = "sched"
+        elif "SYSCALL" in msg or "imprimir" in msg or "ler" in msg: tag = "syscall"
+        elif "RUNNING" in msg: tag = "debug"
+        elif "matando" in msg: tag = "end"
+        elif "Rodando" in msg: tag = "helper"
+        else: tag = ""
+        output.insert(tk.END, msg + "\n", tag)
+        output.see(tk.END)
+        output.configure(state=tk.DISABLED)
+
+    # redireciona print
+    class Redirector:
+        def write(self, msg):
+            if msg.strip():
+                root.after(0, log, msg.strip())
+        def flush(self): pass
+
+    # dialogo
+    input_result = [None]
+    input_event = threading.Event()
+
+    def gui_input(prompt=""):
+        input_event.clear()
+        root.after(0, lambda: _pedir_input(prompt))
+        input_event.wait()
+        return str(input_result[0])
+
+    def _pedir_input(prompt):
+        val = simpledialog.askinteger("Input do processo", prompt, parent=root)
+        input_result[0] = val if val is not None else 0
+        input_event.set()
+
+    # execucao
+    def run():
+        old_stdout = sys.stdout
+        old_input = builtins.input
+        sys.stdout = Redirector()
+        builtins.input = gui_input
+        try:
+            executar()
+        finally:
+            sys.stdout = old_stdout
+            builtins.input = old_input
+
+    def iniciar():
+        pcbs.clear()
+        pcbs_blocked.clear()
+        pcbs_waiting.clear()
+        output.configure(state=tk.NORMAL)
+        output.delete("1.0", tk.END)
+        output.configure(state=tk.DISABLED)
+        for fname, (av, cv, pv) in param_vars.items():
+            try:
+                pcb = parser(fname, int(pv.get()), int(cv.get()), int(av.get()))
+                pcbs_waiting.append(pcb)
+            except Exception as e:
+                log(f"Erro ao carregar {fname}: {e}")
+                return
+        threading.Thread(target=run, daemon=True).start()
+    root.mainloop()
 
 if __name__ == '__main__':
-    pcb1 = parser("prog1.txt", period=10, ci=6, arrival_time=0)
-    pcb2 = parser("prog2.txt", period=20, ci=19, arrival_time=3)
-    pcb3 = parser("prog3.txt", period=10, ci=7, arrival_time=5)
-    pcbs_waiting.extend([pcb1, pcb2, pcb3])
-    executar()
+    try:
+        import tkinter as tk
+        tk.Tk().destroy()
+        interface()
+    except Exception:
+        print("sem tkinter, GUI nao disponivel, rodando no terminal")
+        import glob
+        while True:
+            pcbs.clear()
+            pcbs_blocked.clear()
+            pcbs_waiting.clear()
+            for arquivo in sorted(glob.glob("*.txt")):
+                ans = input(f"Carregar arquivo {arquivo}? (Y/N):").strip().upper()
+                if ans == "Y":
+                    arrival = int(input("  Arrival:  "))
+                    ci = int(input("  Ci:  "))
+                    period = int(input("  Period:  "))
+                    pcbs_waiting.append(parser(arquivo, period, ci, arrival))
+            if pcbs_waiting:
+                executar()
+            else:
+                print ("Nenhum programa selecionado")
+            resp = input("\nRodar novamente? (Y/N): ").strip().upper()
+            if resp != "Y":
+                break
+
 
 
