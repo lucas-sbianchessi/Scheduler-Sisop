@@ -103,10 +103,11 @@ def executar():
     time = 0
     acc = 0  # apenas para flag do SO
 
-    MAX_TIME = 1000
+    MAX_TIME = 100
     while (
         len(pcbs) > 0 or len(pcbs_blocked) > 0 or len(pcbs_waiting) > 0
     ) and time < MAX_TIME:
+        time += 1
         # 1-> ==== ATUALIZA BLOQUEADOS ================================================================
         for pcb in pcbs_blocked[:]:
             pcb.block_time -= 1
@@ -129,11 +130,19 @@ def executar():
                     f"Processo {pcbs[active].name} terminou, bloqueando ate proximo periodo"
                 )
                 # a deadline e o tempo que falta para o proximo periodo
-                pcbs[active].state = "blocked"
-                pcbs[active].block_time = pcbs[active].deadline
-                pcbs[active].current_ci = pcbs[active].ci  # reseta o ci
+                pcb = parser(
+                    pcbs[active].name,
+                    pcbs[active].period,
+                    pcbs[active].ci,
+                    pcbs[active].arrival_time,
+                )
+                pcb.state = "blocked"
+                pcb.block_time = pcbs[
+                    active
+                ].deadline  # qnt tempo para o proximo periodo
                 # coloca como blocked para rodar no proximo periodo
-                pcbs_blocked.append(pcbs.pop(active))
+                pcbs_blocked.append(pcb)
+                pcbs.pop(active)
                 syscall = 0
             elif acc == 1:  # imprime o valor do acc
                 print(
@@ -161,10 +170,9 @@ def executar():
             continue
 
         # 4-> ==== CHAMA ESCALONADOR ================================================================
-        if len(pcbs) == 0:  # se n tem pcbs vai para a proxima iteracao
-            time += 1
-            continue
         active = escalonar(active, time)
+        if not pcbs:  # se n tem pcbs vai para a proxima iteracao
+            continue
 
         # 5-> ==== EXECUTA INSTRUCOES ================================================================
 
@@ -242,16 +250,16 @@ def executar():
                 pcb.current_ci > pcb.deadline
             ):  # falta mais tempo pra acabar do que se tem
                 print(f"Deadline perdido: {pcb.name} no instante {time}")
-                # bloqueia ate o proximo periodo dele e reseta
-                pcbs[active].current_ci = pcbs[active].ci
-                pcb.state = "blocked"
-                pcb.block_time = pcb.deadline
-                pcbs_blocked.append(pcbs.pop(n))
+                # bloqueia ate o proximo periodo dele e reseta, pcbn, pcbNew
+                pcbn = parser(pcb.name, pcb.period, pcb.ci, pcb.arrival_time)
+                pcbn.state = "blocked"
+                pcbn.block_time = pcb.deadline  # qnt tempo para o proximo periodo
+                pcbs_blocked.append(pcbn)
+                pcbs.pop(n)
+                # coloca como blocked para rodar no proximo periodo
 
         for pcb in pcbs_blocked:
             pcb.deadline -= 1
-
-        time += 1
 
 
 # ESCALONADOR - implementa EDF
@@ -260,7 +268,7 @@ def escalonar(active, time):
         return 0
     smallest = active
     for n in range(len(pcbs)):
-        if pcbs[n].deadline < pcbs[smallest].deadline:
+        if (pcbs[n].deadline < pcbs[smallest].deadline) and pcbs[n].deadline > 0:
             smallest = n
     if smallest != active:
         print(
@@ -449,7 +457,7 @@ if __name__ == "__main__":
             if pcbs_waiting:
                 executar()
             else:
-                print("Nenhum programa selecionado")
+                p: wrint("Nenhum programa selecionado")
             resp = input("\nRodar novamente? (Y/N): ").strip().upper()
             if resp != "Y":
                 break
