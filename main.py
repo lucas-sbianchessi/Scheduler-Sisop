@@ -1,80 +1,88 @@
 import random
 import re
+
 Progs = ["prog1.txt"]
 pcbs = []
 pcbs_blocked = []
 pcbs_waiting = []
+
 
 # PROCESS CONTROL BLOCK
 # cadastro de cada processo -> guarda tudo que precisa pra continuar de onde parou
 # temos duas categorias neste caso -> estado de exec. e info. de escalonamento
 class PCB:
     def __init__(self, name, instructions, data, period, ci, arrival_time):
-        self.name = name #nome do processo
+        self.name = name  # nome do processo
 
-        #EXECUCAO -> salva o processo quando ele eh pausado
-        self.instructions = instructions    # instrucoes parseadas de .code
-        self.data = data                    # dic. de vars dda memoria do processo
-        self.pc = 0                         # idx da proxima instrucao
-        self.acc = 0                        # acumulador
+        # EXECUCAO -> salva o processo quando ele eh pausado
+        self.instructions = instructions  # instrucoes parseadas de .code
+        self.data = data  # dic. de vars dda memoria do processo
+        self.pc = 0  # idx da proxima instrucao
+        self.acc = 0  # acumulador
 
-        #ESCALONAMENTO -> o que o EDF vai usar para tomar decisoes
-        self.state ="ready"                     # estado do processo -> running/ready/blocked
-        self.period = period                    # periodo da tarefa -> intervalo entre ativacoes
-        self.ci = ci                            # tempo de computacao maxima
-        self.used_ci = 0                        # tempo de computacao usado
-        self.arrival_time = arrival_time        # instate que tarefa chega ao sistema
-        self.deadline = arrival_time + period   # deadline absoluto
-        self.block_time = 0                     # contador regressivo -> usar no SYSCALL
+        # ESCALONAMENTO -> o que o EDF vai usar para tomar decisoes
+        self.state = "ready"  # estado do processo -> running/ready/blocked
+        self.period = period  # periodo da tarefa -> intervalo entre ativacoes
+        self.ci = ci  # tempo de computacao maxima
+        self.current_ci = ci  # tempo de computacao usado
+        self.arrival_time = arrival_time  # instate que tarefa chega ao sistema
+        self.deadline = period  # deadline
+        self.block_time = 0  # contador regressivo -> usar no SYSCALL
 
 
 # PARSER - separar code de data - carrega e inicializa programas
 def parser(file_name, period, ci, arrival_time):
-    instructions = []       # lista de instrucoes
-    data = {}               # dic. vars do processo
-    labels = {}             # dic. para onde labels apontam (loop -> idx3)
-    mode = None             # secao atual do arquivo
+    instructions = []  # lista de instrucoes
+    data = {}  # dic. vars do processo
+    labels = {}  # dic. para onde labels apontam (loop -> idx3)
+    mode = None  # secao atual do arquivo
 
     # 1 -> separar modes, add labels e data
     # le o arquivo linha  linha separando codigo de dado, tira comentarios
     lines_code_raw = []
     with open(file_name, "r") as f:
         for line in f:
-
             # remove comentarios e linhas vazias
             line = line.strip()
-            if not line or line.startswith("#"): continue
-            line = re.split(r'\s+#(?!\S)', line)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            line = re.split(r"\s+#(?!\S)", line)[0].strip()
 
             # mode define qual secao o parser ta agr
-            if line == ".code": mode = "code"
-            elif line == ".endcode": mode = None
-            elif line == ".data": mode = "data"
-            elif line == ".enddata": mode = None
+            if line == ".code":
+                mode = "code"
+            elif line == ".endcode":
+                mode = None
+            elif line == ".data":
+                mode = "data"
+            elif line == ".enddata":
+                mode = None
 
-            elif mode == "code": lines_code_raw.append(line)
+            elif mode == "code":
+                lines_code_raw.append(line)
             elif mode == "data":
                 part = line.split()
                 data[part[0]] = int(part[1])
-
 
     # 2 -> mapear labels para os indices
     # percorre codigo identificando labels e registrando a que indx aponta
     # instrucoes de salto vao referenciar essas labels pelo nome
     # prog2 deve ficar -> {"loop": 0, "fim": 6}
-    idx =0
+    idx = 0
     no_label_lines = []
     for line in lines_code_raw:
         # percorre linhas do code procurando por qql coisa com :
         if ":" in line:
             part = line.split(":")
-            labels[part[0].strip()] = idx   # registra indx da label
+            labels[part[0].strip()] = idx  # registra indx da label
             rest = part[1].strip()
-            if not rest: continue           # label sozinha, sem mais instrucoes
-            line = rest                     # continua com a instrucao que tava depois do :
-        no_label_lines.append(line)         # labels somem da lista de instrucoes, so existem no dic. labels
+            if not rest:
+                continue  # label sozinha, sem mais instrucoes
+            line = rest  # continua com a instrucao que tava depois do :
+        no_label_lines.append(
+            line
+        )  # labels somem da lista de instrucoes, so existem no dic. labels
         idx += 1
-
 
     # 3 -> monta lista final trocando os nomes de label por indx
     # cada instrucao deve ficar como uma lista ["LOAD", "a"], ["SUB", "#1"], ["BRZERO", 6]
@@ -90,20 +98,20 @@ def parser(file_name, period, ci, arrival_time):
 
 
 def executar():
-    syscall = 0 #flag do SO
+    syscall = 0  # flag do SO
     active = 0
     time = 0
-    acc = 0 # apenas para flag do SO
+    acc = 0  # apenas para flag do SO
 
     MAX_TIME = 1000
-    while (len(pcbs) > 0 or len(pcbs_blocked) > 0 or len(pcbs_waiting) >0) and time < MAX_TIME:
-
+    while (
+        len(pcbs) > 0 or len(pcbs_blocked) > 0 or len(pcbs_waiting) > 0
+    ) and time < MAX_TIME:
         # 1-> ==== ATUALIZA BLOQUEADOS ================================================================
         for pcb in pcbs_blocked[:]:
             pcb.block_time -= 1
             if pcb.block_time <= 0:  # dareDY E TROCA DE FILA
                 pcb.state = "ready"
-                pcb.deadline = time + pcb.period
                 pcbs.append(pcb)
                 pcbs_blocked.remove(pcb)
 
@@ -117,34 +125,55 @@ def executar():
         # 3-> ==== TRATA SYSCALL ================================================================
         if syscall == 1:
             if acc == 0:  # termina o programa
-                print(f"Processo {pcbs[active].name} terminou, matando processo")
-                pcbs.pop(active)
+                print(
+                    f"Processo {pcbs[active].name} terminou, bloqueando ate proximo periodo"
+                )
+                # a deadline e o tempo que falta para o proximo periodo
+                pcbs[active].state = "blocked"
+                pcbs[active].block_time = pcbs[active].deadline
+                pcbs[active].current_ci = pcbs[active].ci  # reseta o ci
+                # coloca como blocked para rodar no proximo periodo
+                pcbs_blocked.append(pcbs.pop(active))
                 syscall = 0
             elif acc == 1:  # imprime o valor do acc
-                print(f"Processo {pcbs[active].name} pediu para imprimir valor: {pcbs[active].acc}")
+                print(
+                    f"Processo {pcbs[active].name} pediu para imprimir valor: {pcbs[active].acc}"
+                )
                 pcbs[active].block_time = random.randint(1, 3)
                 pcbs[active].state = "blocked"
-                pcbs_blocked.append(pcbs.pop(active))  # remove do pcbs e coloca no blocked
+                pcbs_blocked.append(
+                    pcbs.pop(active)
+                )  # remove do pcbs e coloca no blocked
                 syscall = 0
             elif acc == 2:  # le um valor inteiro e salva no acc
-                pcbs[active].acc = int(input(f"Processo {pcbs[active].name} pediu para ler um valor inteiro: "))
+                pcbs[active].acc = int(
+                    input(
+                        f"Processo {pcbs[active].name} pediu para ler um valor inteiro: "
+                    )
+                )
                 pcbs[active].block_time = random.randint(1, 3)
                 pcbs[active].state = "blocked"
-                pcbs_blocked.append(pcbs.pop(active))  # remove do pcbs e coloca no blocked
+                pcbs_blocked.append(
+                    pcbs.pop(active)
+                )  # remove do pcbs e coloca no blocked
                 syscall = 0
             active = escalonar(active, time)
             continue
 
         # 4-> ==== CHAMA ESCALONADOR ================================================================
-        if len (pcbs) == 0:
-            time +=1
+        if len(pcbs) == 0:  # se n tem pcbs vai para a proxima iteracao
+            time += 1
             continue
         active = escalonar(active, time)
 
         # 5-> ==== EXECUTA INSTRUCOES ================================================================
+
+        # seta como ativa e pega instrucao
         pcbs[active].state = "running"
         instr = pcbs[active].instructions[pcbs[active].pc]
-        print(f"[t={time}] RUNNING: {pcbs[active].name} | DDline= {pcbs[active].deadline} | pc={pcbs[active].pc} | acc={pcbs[active].acc} | instr={instr}")
+        print(
+            f"[t={time}] RUNNING: {pcbs[active].name} | DDline= {pcbs[active].deadline} | pc={pcbs[active].pc} | acc={pcbs[active].acc} | instr={instr}"
+        )
         # ARITMETICO ---------------------------------------
         if instr[0] == "add":
             if instr[1].startswith("#"):  # imediato
@@ -177,67 +206,69 @@ def executar():
         # SALTO -----------------------------------------
         elif instr[0] == "BRANY":
             pcbs[active].pc = instr[1]
-            pcbs[active].used_ci += 1
             time += 1
             continue
         elif instr[0] == "BRPOS":
             if pcbs[active].acc > 0:
                 pcbs[active].pc = instr[1]
-                pcbs[active].used_ci += 1
                 time += 1
                 continue
         elif instr[0] == "BRZERO":
             if pcbs[active].acc == 0:
                 pcbs[active].pc = instr[1]
-                pcbs[active].used_ci += 1
                 time += 1
                 continue
         # eu sei que nos exemplos nao tem BRNEG mas vai que ne
         elif instr[0] == "BRNEG":
             if pcbs[active].acc < 0:
                 pcbs[active].pc = instr[1]
-                pcbs[active].used_ci += 1
                 time += 1
                 continue
         # SISTEMA ---------------------------------------
         elif instr[0] == "syscall":
-            # salva contexto e mando pro SO
+            # salva contexto e mando pro SO, no caso nao mais TODO?
             pcbs[active].state = "ready"
             acc = int(instr[1])  # acc recebe o pedido do processo
             syscall = 1
 
         # 6-> ==== VERIFICA CI E REAGENDA ================================================================
         pcbs[active].pc += 1
-        pcbs[active].used_ci += 1
-        if pcbs[active].used_ci >= pcbs[active].ci:
-            pcbs[active].used_ci = 0
-            pcbs[active].pc = 0
-            pcbs[active].acc = 0
-            pcbs[active].deadline = time + pcbs[active].period
-            pcbs[active].state = "ready"
+        pcbs[active].current_ci -= 1
 
         # 7-> ==== VERIFICA DEADLINE ================================================================
-        for pcb in pcbs + pcbs_blocked:
-            if time > pcb.deadline:
+        for n, pcb in enumerate(pcbs):
+            pcb.deadline -= 1
+            if (
+                pcb.current_ci > pcb.deadline
+            ):  # falta mais tempo pra acabar do que se tem
                 print(f"Deadline perdido: {pcb.name} no instante {time}")
+                # bloqueia ate o proximo periodo dele e reseta
+                pcbs[active].current_ci = pcbs[active].ci
+                pcb.state = "blocked"
+                pcb.block_time = pcb.deadline
+                pcbs_blocked.append(pcbs.pop(n))
 
-        time +=1
+        for pcb in pcbs_blocked:
+            pcb.deadline -= 1
+
+        time += 1
+
 
 # ESCALONADOR - implementa EDF
 def escalonar(active, time):
     if len(pcbs) == 0:
         return 0
-    smallest = 0
+    smallest = active
     for n in range(len(pcbs)):
         if pcbs[n].deadline < pcbs[smallest].deadline:
             smallest = n
     if smallest != active:
-        print(f"[t={time}] Escalonando: {pcbs[smallest].name} (deadline: {pcbs[smallest].deadline})")
+        print(
+            f"[t={time}] Escalonando: {pcbs[smallest].name} (deadline: {pcbs[smallest].deadline})"
+        )
     else:
-        print(f" ")
+        print(" ")
     return smallest
-
-
 
 
 # INTERFACE - entrada e saida / bloatware
@@ -248,6 +279,7 @@ def interface():
     import builtins
     import sys
     import glob
+
     root = tk.Tk()
     root.title("T1-SISOP")
 
@@ -255,11 +287,11 @@ def interface():
     top = tk.LabelFrame(root, text="Configuracao", padx=6, pady=6)
     top.pack(fill=tk.X, padx=10, pady=8)
 
-    tk.Label(top, text="Selecione um ou mais programas",
-             font=("Arial", 15, "bold")).pack(anchor=tk.W)
+    tk.Label(
+        top, text="Selecione um ou mais programas", font=("Arial", 15, "bold")
+    ).pack(anchor=tk.W)
 
-    listbox = tk.Listbox(top, selectmode=tk.MULTIPLE,
-                         height=4, exportselection=False)
+    listbox = tk.Listbox(top, selectmode=tk.MULTIPLE, height=4, exportselection=False)
 
     listbox.pack(fill=tk.X)
     for f in sorted(glob.glob("*.txt")):
@@ -268,22 +300,22 @@ def interface():
     params_frame = tk.Frame(top)
     params_frame.pack(fill=tk.X, pady=4)
     for col, txt in enumerate(["Arquivo", "Arrival", "Ci", "Periodo"]):
-        tk.Label(params_frame, text=txt, width=13,
-                 font=("Arial", 15, "bold")).grid(row=0, column=col)
+        tk.Label(params_frame, text=txt, width=13, font=("Arial", 15, "bold")).grid(
+            row=0, column=col
+        )
 
     param_vars = {}
 
     def on_select(_=None):
         selected = [listbox.get(i) for i in listbox.curselection()]
-        old = {f: (a.get(), c.get(), p.get())
-               for f, (a,c,p) in param_vars.items()}
+        old = {f: (a.get(), c.get(), p.get()) for f, (a, c, p) in param_vars.items()}
         for w in params_frame.winfo_children():
-            if  int (w.grid_info().get("row", 0)) > 0:
+            if int(w.grid_info().get("row", 0)) > 0:
                 w.destroy()
             param_vars.clear()
 
-        for row, fname in enumerate(selected,1):
-            d = old.get (fname, ("0", "0", "0"))
+        for row, fname in enumerate(selected, 1):
+            d = old.get(fname, ("0", "0", "0"))
             tk.Label(params_frame, text=fname, width=13).grid(row=row, column=0)
             av = tk.StringVar(value=d[0])
             cv = tk.StringVar(value=d[1])
@@ -292,33 +324,48 @@ def interface():
             tk.Entry(params_frame, textvariable=cv, width=13).grid(row=row, column=2)
             tk.Entry(params_frame, textvariable=pv, width=13).grid(row=row, column=3)
             param_vars[fname] = (av, cv, pv)
+
     listbox.bind("<<ListboxSelect>>", on_select)
-    tk.Button(top, text="Executar", command=lambda: iniciar(),
-              bg="white", fg="black",
-              font = ("Arial", 12, "bold")).pack(pady=4)
+    tk.Button(
+        top,
+        text="Executar",
+        command=lambda: iniciar(),
+        bg="white",
+        fg="black",
+        font=("Arial", 12, "bold"),
+    ).pack(pady=4)
 
     # 2-> parte inferior, saida
     bot = tk.LabelFrame(root, text="Execucao", padx=6, pady=6)
-    bot.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,8))
+    bot.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
 
-    output = scrolledtext.ScrolledText(bot, height=20, state=tk.DISABLED, font = ("Courier", 12), bg="black", fg="white")
+    output = scrolledtext.ScrolledText(
+        bot, height=20, state=tk.DISABLED, font=("Courier", 12), bg="black", fg="white"
+    )
     output.pack(fill=tk.BOTH, expand=True)
     output.tag_config("deadline", foreground="red", font=("Courier", 15))
-    output.tag_config("sched", foreground="cyan", font = ("Courier", 15))
-    output.tag_config("syscall", foreground="magenta", font = ("Courier", 15))
-    output.tag_config("debug", foreground="grey", font = ("Courier", 10))
-    output.tag_config("end", foreground="yellow", font = ("Courier", 15))
-    output.tag_config("helper", foreground="black", font = ("Courier", 1))
+    output.tag_config("sched", foreground="cyan", font=("Courier", 15))
+    output.tag_config("syscall", foreground="magenta", font=("Courier", 15))
+    output.tag_config("debug", foreground="grey", font=("Courier", 10))
+    output.tag_config("end", foreground="yellow", font=("Courier", 15))
+    output.tag_config("helper", foreground="black", font=("Courier", 1))
 
     def log(msg):
         output.configure(state=tk.NORMAL)
-        if "Deadline perdido" in msg: tag = "deadline"
-        elif "Escalonando" in msg or "→" in msg: tag = "sched"
-        elif "SYSCALL" in msg or "imprimir" in msg or "ler" in msg: tag = "syscall"
-        elif "RUNNING" in msg: tag = "debug"
-        elif "matando" in msg: tag = "end"
-        elif "Rodando" in msg: tag = "helper"
-        else: tag = ""
+        if "Deadline perdido" in msg:
+            tag = "deadline"
+        elif "Escalonando" in msg or "→" in msg:
+            tag = "sched"
+        elif "SYSCALL" in msg or "imprimir" in msg or "ler" in msg:
+            tag = "syscall"
+        elif "RUNNING" in msg:
+            tag = "debug"
+        elif "matando" in msg:
+            tag = "end"
+        elif "Rodando" in msg:
+            tag = "helper"
+        else:
+            tag = ""
         output.insert(tk.END, msg + "\n", tag)
         output.see(tk.END)
         output.configure(state=tk.DISABLED)
@@ -328,7 +375,9 @@ def interface():
         def write(self, msg):
             if msg.strip():
                 root.after(0, log, msg.strip())
-        def flush(self): pass
+
+        def flush(self):
+            pass
 
     # dialogo
     input_result = [None]
@@ -372,16 +421,20 @@ def interface():
                 log(f"Erro ao carregar {fname}: {e}")
                 return
         threading.Thread(target=run, daemon=True).start()
+
     root.mainloop()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     try:
         import tkinter as tk
+
         tk.Tk().destroy()
         interface()
     except Exception:
         print("sem tkinter, GUI nao disponivel, rodando no terminal")
         import glob
+
         while True:
             pcbs.clear()
             pcbs_blocked.clear()
@@ -396,10 +449,7 @@ if __name__ == '__main__':
             if pcbs_waiting:
                 executar()
             else:
-                print ("Nenhum programa selecionado")
+                print("Nenhum programa selecionado")
             resp = input("\nRodar novamente? (Y/N): ").strip().upper()
             if resp != "Y":
                 break
-
-
-
